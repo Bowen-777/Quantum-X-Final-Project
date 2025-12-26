@@ -13,16 +13,26 @@ import os
 import datetime
 
 gap_represent = 'origin'  # [log, origin]
-code_mode = 'annealing'  # [annealing, energy_gap, both]
+code_mode = 'annealing'  # [annealing, energy_gap, both, plot, test ...]
+time_step_mode = 'flexible'  # [flexible, standard]
+# time_step_mode = 'standard'  # [flexible, standard]
 
 n=7
 m=10*n  # Set m to be n^2
 eta=0.1
 kappa = 1  # The scaling of H_P (The objective hamiltonian)
 
+rounds = 1  # How many eta's do we want to run in eta_candidate
+repeat = 1
+eta_candidate = np.linspace(0.1, 0.3, 6)
+
 T=10
-M=100
-dt=T/M
+M=100  # Annealing step
+dt_standard=T/M
+shots_sampling = 100
+delta_min = 0.5
+amplitude = 0.5  # The rate of gap increasing regarding the center
+s_star = 0.5  # The step min_energy_gap occurs
 
 s=[]
 A=[]
@@ -30,6 +40,28 @@ y=[]
 
 now  = datetime.datetime.now()
 folder_name = now.strftime("RST_%m-%d_%H%M")
+
+#region === finetune time gap based on energy gap ===
+def get_gap(s):
+    return np.sqrt(delta_min**2 + amplitude * (s - s_star)**2)
+#endregion
+s_grid = np.linspace(0, 1, M)
+# print(get_gap(s_grid))
+# weights = 1.0 / (get_gap(s_grid)**2)
+weights = get_gap(s_grid)**2
+dt_array = (weights / np.sum(weights)) * T
+# print(s_grid)
+# print(weights)
+if code_mode == 'plot' or code_mode == 'annealing':
+    x = np.linspace(0, M-1, M)
+    plt.plot(x, dt_array, label=f'time weight')
+    plt.legend()
+    plt.title("time weight")
+    plt.xlabel("step")
+    plt.ylabel("dt array")
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+    plt.savefig(f"{folder_name}/dt_weight.png", dpi=300, bbox_inches='tight')
 
 #region === Initialization of matrix A and error vector e ===
 def init():
@@ -57,7 +89,7 @@ def init():
 #endregion
 
 #region === Run the annealing algorithm to get the ground state ===
-def run():
+def run(repeat_idx):
     t=0
     global A, s, y
     print(s)
@@ -66,12 +98,24 @@ def run():
     for i in range(n):
         circ.h(i)
 
+    current_time = 0.0
     for i in range(M):
-        t=(i+0.5)*dt
-        alpha=(1-t/T)
-        beta=t/T
+        if time_step_mode == 'standard':
+            dt = dt_standard
+            t=(i+0.5)*dt
+            alpha=(1-t/T)
+            beta=t/T
 
-        angle=2.0*beta*dt
+        if time_step_mode == 'flexible':
+            dt = dt_array[i]
+            t_mid = current_time + 0.5 * dt
+            current_time += dt
+            progress = t_mid / T
+            alpha = 1.0 - progress
+            beta = progress
+            # print(t_mid)
+
+        angle=2.0*beta*dt_standard
 
         for k in range(m):
             for j in range(n):
@@ -89,13 +133,13 @@ def run():
                     circ.cx(j,n)
 
         for j in range(n):
-            circ.rx(2.0*alpha*dt,j)
+            circ.rx(2.0*alpha*dt_standard,j)
 
     circ.measure(range(n),range(n))
 
     simulator=AerSimulator()
     compiled_circuit=transpile(circ,simulator)
-    job=simulator.run(compiled_circuit,shots=100)
+    job=simulator.run(compiled_circuit, shots=shots_sampling)
     result=job.result()
     counts = result.get_counts(circ)
     
@@ -131,13 +175,13 @@ def run():
 
     min_energy = min(instances_data.items(), key=lambda item: item[0])
     print(min_energy)
-    print("合并后的数据：", merged_data)
+    print('Merged data: ', merged_data)
 
     plt.figure(figsize=(10, 6))
     plt.bar(merged_data.keys(), merged_data.values())
     if not os.path.exists(folder_name):
         os.makedirs(folder_name)
-    plt.savefig(f"{folder_name}/eta={eta}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{folder_name}/eta={eta}_{repeat_idx}.png", dpi=300, bbox_inches='tight')
     # plt.show()
 #endregion
 
@@ -253,49 +297,45 @@ def calculate_energy_gap():
 #endregion
 
 #region === Energy Gap calculation for different number of qubits ===
-
-n_max = 7
-gap_min = []
-for i in range(3, n_max+1, 1):
-    n = i
-    m = 10*n
-    # === Construct basic hamiltonian ===
-    driver_ops = []
-    for i in range(n):
-        # -sigma_x 作用在每个比特上
-        driver_ops.append((-sigma_x, i))
-    H_D = kronecker_product_sum(n, driver_ops)
-    # === Construct objective hamiltonian ===
-    init()
-    H_P = construct_problem_hamiltonian(n, m, A, y)
-    # == Calculate energy gap ===
-    calculate_energy_gap()
-    gap_min.append(np.min(gap))
-    x = np.linspace(0, M-1, M)
-    plt.plot(x, gap, label=f'n={n},m={m}')
-    plt.legend()
-    plt.title("Energy gap")
-    plt.xlabel("step")
-    if gap_represent == 'log':
-        plt.ylabel("log(Energy)")
-    else:
-        plt.ylabel("Energy")
-    # plt.show()
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
-    # if(n == n_max):
-        # plt.savefig(f"{folder_name}/energy_gap.png", dpi=300, bbox_inches='tight')
+if code_mode == 'energy_gap' or code_mode == 'both':
+    n_max = 7
+    gap_min = []
+    for i in range(3, n_max+1, 1):
+        n = i
+        m = 10*n
+        # === Construct basic hamiltonian ===
+        driver_ops = []
+        for i in range(n):
+            # -sigma_x 作用在每个比特上
+            driver_ops.append((-sigma_x, i))
+        H_D = kronecker_product_sum(n, driver_ops)
+        # === Construct objective hamiltonian ===
+        init()
+        H_P = construct_problem_hamiltonian(n, m, A, y)
+        # == Calculate energy gap ===
+        calculate_energy_gap()
+        gap_min.append(np.min(gap))
+        x = np.linspace(0, M-1, M)
+        plt.plot(x, gap, label=f'n={n},m={m}')
+        plt.legend()
+        plt.title("Energy gap")
+        plt.xlabel("step")
+        if gap_represent == 'log':
+            plt.ylabel("log(Energy)")
+        else:
+            plt.ylabel("Energy")
+        # plt.show()
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+    plt.savefig(f"{folder_name}/energy_gap.png", dpi=300, bbox_inches='tight')
+    # print(gap_min)
 #endregion
-plt.savefig(f"{folder_name}/energy_gap.png", dpi=300, bbox_inches='tight')
-print(gap_min)
-# plt.savefig(f"{folder_name}/energy_gap.png", dpi=300, bbox_inches='tight')
 
-
-rounds = 6
-# for i in range(rounds):
-#     eta = 0.05*(i+1)
-#     init()
-#     print(s)
-#     run()
-
-# calculate_energy_gap()
+if code_mode == 'annealing' or code_mode == 'both':
+    for i in range(rounds):
+        # eta = 0.05*(i+1)
+        eta = eta_candidate[i]
+        for j in range(repeat):
+            init()
+            print(f"The ground state (eta={eta}):", s)
+            run(repeat_idx=j)
