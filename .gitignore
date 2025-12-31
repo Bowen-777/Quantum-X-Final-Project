@@ -3,3 +3,6 @@ results/
 RST*/
 eta*
 test.py
+*.json
+test*.ipynb
+energy_gap\ -*

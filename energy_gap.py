@@ -260,7 +260,7 @@ def construct_problem_hamiltonian(n, m, A, y):
 H_D = H_P = 0
 gap = []
 def construct_ham(i):
-    t=(i+0.5)*dt
+    t=(i+0.5)*dt_standard
     alpha=(1-t/T)
     beta=t/T
     H = alpha * H_D + beta * H_P
