@@ -31,7 +31,7 @@ M=100  # Annealing step
 dt_standard=T/M
 shots_sampling = 100
 delta_min = 0.5
-amplitude = 2  # The rate of gap increasing regarding the center
+amplitude = 3  # The rate of gap increasing regarding the center
 s_star = 0.5  # The step min_energy_gap occurs
 
 s=[]
