@@ -15,6 +15,7 @@ import datetime
 gap_represent = 'origin'  # [log, origin]
 code_mode = 'annealing'  # [annealing, energy_gap, both, plot, test ...]
 time_step_mode = 'flexible'  # [flexible, standard]
+schedule_func = 'quadratic'  # [quadratic, tanh]
 # time_step_mode = 'standard'  # [flexible, standard]
 
 n=7
@@ -23,7 +24,7 @@ eta=0.1
 kappa = 1  # The scaling of H_P (The objective hamiltonian)
 
 rounds = 1  # How many eta's do we want to run in eta_candidate
-repeat = 1
+repeat = 3
 eta_candidate = np.linspace(0.1, 0.3, 6)
 
 T=10
@@ -31,7 +32,7 @@ M=100  # Annealing step
 dt_standard=T/M
 shots_sampling = 100
 delta_min = 0.5
-amplitude = 0.5  # The rate of gap increasing regarding the center
+amplitude = 0.7  # The rate of gap increasing regarding the center
 s_star = 0.5  # The step min_energy_gap occurs
 
 s=[]
@@ -43,9 +44,19 @@ folder_name = now.strftime("RST_%m-%d_%H%M")
 
 #region === finetune time gap based on energy gap ===
 def get_gap(s):
-    return np.sqrt(delta_min**2 + amplitude * (s - s_star)**2)
+    if schedule_func == 'quadratic':
+        return np.sqrt(delta_min**2 + amplitude * (s - s_star)**2)
+    elif schedule_func == 'tanh':
+        return np.tanh(s / amplitude)
+    else:
+        raise ValueError("this schedule_func is not implemented.")
 #endregion
-s_grid = np.linspace(0, 1, M)
+if schedule_func == 'quadratic':
+    s_grid = np.linspace(0, 1, M)
+elif schedule_func == 'tanh':
+    s_grid = np.linspace(-1, 1, M)
+else:
+    raise ValueError("this schedule_func is not implemented.")
 # print(get_gap(s_grid))
 # weights = 1.0 / (get_gap(s_grid)**2)
 weights = get_gap(s_grid)**2
@@ -115,7 +126,7 @@ def run(repeat_idx):
             beta = progress
             # print(t_mid)
 
-        angle=2.0*beta*dt_standard
+        angle=2.0*beta*max(dt, dt_standard)
 
         for k in range(m):
             for j in range(n):
@@ -133,8 +144,9 @@ def run(repeat_idx):
                     circ.cx(j,n)
 
         for j in range(n):
-            circ.rx(2.0*alpha*dt_standard,j)
+            circ.rx(2.0*alpha*max(dt,dt_standard),j)
 
+    print(current_time)
     circ.measure(range(n),range(n))
 
     simulator=AerSimulator()
