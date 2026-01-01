@@ -17,7 +17,7 @@ code_mode = 'annealing'  # [annealing, energy_gap, both, plot, test ...]
 time_step_mode = 'flexible'  # [flexible, standard]
 # time_step_mode = 'standard'  # [flexible, standard]
 
-n=7
+n=10
 m=10*n  # Set m to be n^2
 eta=0.1
 kappa = 1  # The scaling of H_P (The objective hamiltonian)
@@ -33,6 +33,7 @@ shots_sampling = 100
 delta_min = 0.5
 amplitude = 3  # The rate of gap increasing regarding the center
 s_star = 0.5  # The step min_energy_gap occurs
+c=5
 
 s=[]
 A=[]
@@ -128,7 +129,7 @@ def run(repeat_idx, time_step_mode):
             if y[k]==1:
                 circ.x(n)
 
-            circ.rz(angle/(m/n),n)
+            circ.rz(c*angle/(m/n),n)
 
             if y[k]==1:
                 circ.x(n)
@@ -137,7 +138,7 @@ def run(repeat_idx, time_step_mode):
                     circ.cx(j,n)
 
         for j in range(n):
-            circ.rx(2.0*alpha*dt_standard,j)
+            circ.rx(2.0*c*alpha*dt_standard,j)
 
     circ.measure(range(n),range(n))
 
