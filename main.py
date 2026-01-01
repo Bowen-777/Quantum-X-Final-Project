@@ -73,7 +73,6 @@ def scheduling(schedule_func):
     if code_mode == 'plot' or code_mode == 'annealing':
         x = np.linspace(0, M-1, M)
         plt.figure(plt_index)
-        print(plt_index)
         plt.plot(x, dt_array, label=f'time weight')
         plt.legend()
         plt.title(f"time weight_{schedule_func}")
@@ -85,8 +84,6 @@ def scheduling(schedule_func):
         plt.close()
         plt_index += 1
 #endregion
-if code_mode == 'plot':
-    scheduling(schedule_func='quadratic')
 
 #region === Initialization of matrix A and error vector e ===
 def init():
@@ -118,7 +115,7 @@ def init():
 #endregion
 
 #region === Run the annealing algorithm to get the ground state ===
-def run(repeat_idx, time_step_mode):
+def run(repeat_idx, time_step_mode, schedule_func):
     t=0
     global A, s, y, plt_index
 
@@ -207,11 +204,13 @@ def run(repeat_idx, time_step_mode):
     print('Merged data: ', merged_data)
 
     plt.figure(plt_index)
-    plt.figure(figsize=(10, 6))
+    plt.xlim(0, 50)
+    # plt.figure(figsize=(10, 6))
     plt.bar(merged_data.keys(), merged_data.values())
     if not os.path.exists(folder_name):
         os.makedirs(folder_name)
-    plt.savefig(f"{folder_name}/{time_step_mode}.png", dpi=300, bbox_inches='tight')
+    file_name = time_step_mode + '_' + schedule_func
+    plt.savefig(f"{folder_name}/{file_name}_{eta}_{repeat_idx}.png", dpi=300, bbox_inches='tight')
     plt.close()
     plt_index += 1
     # plt.show()
@@ -352,8 +351,7 @@ if code_mode == 'annealing' or code_mode == 'both':
         eta = eta_candidate[i]
         for j in range(repeat):
             init()
-            # run(repeat_idx=j,time_step_mode='standard')
+            run(repeat_idx=j, time_step_mode='standard', schedule_func='')
             for function in schedule_funcs:
                 scheduling(schedule_func=function)
-                # print(dt_array)
-                # run(repeat_idx=j,time_step_mode='flexible')
+                run(repeat_idx=j, time_step_mode='flexible', schedule_func=function)
