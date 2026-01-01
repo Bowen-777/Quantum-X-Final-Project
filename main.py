@@ -14,59 +14,83 @@ import datetime
 
 gap_represent = 'origin'  # [log, origin]
 code_mode = 'annealing'  # [annealing, energy_gap, both, plot, test ...]
-time_step_mode = 'flexible'  # [flexible, standard]
-# time_step_mode = 'standard'  # [flexible, standard]
+time_step_mode = 'standard'  # [flexible, standard]
+# schedule_func_init = 'quadratic'  # [quadratic, tanh]
+schedule_funcs = ['quadratic', 'tanh', 'arctan']
 
-n=10
+n=6
 m=10*n  # Set m to be n^2
 eta=0.1
-kappa = 1  # The scaling of H_P (The objective hamiltonian)
+kappa = 1  # The scaling of H_P (The objective hamiltonian) in the energy_gap calculation.
 
 rounds = 1  # How many eta's do we want to run in eta_candidate
 repeat = 1
 eta_candidate = np.linspace(0.1, 0.3, 6)
 
-T=10
-M=100  # Annealing step
+T=50
+M=10*T  # Annealing step
 dt_standard=T/M
 shots_sampling = 100
+# c=5  # The scaling of H_P in the real code
+
 delta_min = 0.5
-amplitude = 3  # The rate of gap increasing regarding the center
+amplitude_quad = 3  # The rate of gap increasing regarding the center
+amplitude_tanh = 1  # The rate of gap increasing regarding the center
+amplitude_arctan = 3  # The rate of gap increasing regarding the center
 s_star = 0.5  # The step min_energy_gap occurs
-c=5
 
 s=[]
 A=[]
 y=[]
+dt_array = []
 
 now  = datetime.datetime.now()
 folder_name = now.strftime("RST_%m-%d_%H%M")
+plt_index = 1
 
 #region === finetune time gap based on energy gap ===
-def get_gap(s):
-    return np.sqrt(delta_min**2 + amplitude * (s - s_star)**2)
+def get_gap(s, schedule_func):
+    if schedule_func == 'quadratic':
+        return np.sqrt(delta_min**2 + amplitude_quad * (s - s_star)**2)
+    elif schedule_func == 'tanh':
+        return np.tanh((s - s_star) / amplitude_tanh)
+    elif schedule_func == 'arctan':
+        return np.arctan((s - s_star) / amplitude_arctan)
+    else:
+        raise ValueError("this schedule_func is not implemented.")
+
+def scheduling(schedule_func):
+    # if schedule_func == 'quadratic':
+        # s_grid = np.linspace(0, 1, M)
+    # elif schedule_func == 'tanh':
+    #     s_grid = np.linspace(-1, 1, M)
+    # else:
+    #     raise ValueError("this schedule_func is not implemented.")
+    global dt_array, plt_index
+    s_grid = np.linspace(0, 1, M)
+    weights = get_gap(s_grid, schedule_func)**2
+    dt_array = (weights / np.sum(weights)) * T
+    if code_mode == 'plot' or code_mode == 'annealing':
+        x = np.linspace(0, M-1, M)
+        plt.figure(plt_index)
+        print(plt_index)
+        plt.plot(x, dt_array, label=f'time weight')
+        plt.legend()
+        plt.title(f"time weight_{schedule_func}")
+        plt.xlabel("step")
+        plt.ylabel("dt array")
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+        plt.savefig(f"{folder_name}/dt_weight_{schedule_func}.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        plt_index += 1
 #endregion
-s_grid = np.linspace(0, 1, M)
-# print(get_gap(s_grid))
-# weights = 1.0 / (get_gap(s_grid)**2)
-weights = get_gap(s_grid)**2
-dt_array = (weights / np.sum(weights)) * T
-# print(s_grid)
-# print(weights)
-if code_mode == 'plot' or code_mode == 'annealing':
-    x = np.linspace(0, M-1, M)
-    plt.plot(x, dt_array, label=f'time weight')
-    plt.legend()
-    plt.title("time weight")
-    plt.xlabel("step")
-    plt.ylabel("dt array")
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
-    plt.savefig(f"{folder_name}/dt_weight.png", dpi=300, bbox_inches='tight')
+if code_mode == 'plot':
+    scheduling(schedule_func='quadratic')
 
 #region === Initialization of matrix A and error vector e ===
 def init():
-    print(n)
+    print("Qubit number (n):", n)
     global s, A, y
     s = []
     A = []
@@ -89,15 +113,14 @@ def init():
     random.shuffle(p)
     for i in range(int(eta*m)):
         y[p[i]]^=1
-
-    print("s:", s)
+    
+    print("Correct answer (s):", s)
 #endregion
 
 #region === Run the annealing algorithm to get the ground state ===
 def run(repeat_idx, time_step_mode):
     t=0
-    global A, s, y
-    print(s)
+    global A, s, y, plt_index
 
     circ = QuantumCircuit(n+1,n)
     for i in range(n):
@@ -110,8 +133,7 @@ def run(repeat_idx, time_step_mode):
             t=(i+0.5)*dt
             alpha=(1-t/T)
             beta=t/T
-
-        if time_step_mode == 'flexible':
+        elif time_step_mode == 'flexible':
             dt = dt_array[i]
             t_mid = current_time + 0.5 * dt
             current_time += dt
@@ -119,6 +141,8 @@ def run(repeat_idx, time_step_mode):
             alpha = 1.0 - progress
             beta = progress
             # print(t_mid)
+        else:
+            raise ValueError("Not correct value of \'time_step_mode\'")
 
         angle=2.0*beta*dt_standard
 
@@ -129,7 +153,7 @@ def run(repeat_idx, time_step_mode):
             if y[k]==1:
                 circ.x(n)
 
-            circ.rz(c*angle/(m/n),n)
+            circ.rz(angle/(m/n),n)
 
             if y[k]==1:
                 circ.x(n)
@@ -138,7 +162,7 @@ def run(repeat_idx, time_step_mode):
                     circ.cx(j,n)
 
         for j in range(n):
-            circ.rx(2.0*c*alpha*dt_standard,j)
+            circ.rx(2.0*alpha*dt_standard,j)
 
     circ.measure(range(n),range(n))
 
@@ -182,11 +206,14 @@ def run(repeat_idx, time_step_mode):
     print(min_energy)
     print('Merged data: ', merged_data)
 
+    plt.figure(plt_index)
     plt.figure(figsize=(10, 6))
     plt.bar(merged_data.keys(), merged_data.values())
     if not os.path.exists(folder_name):
         os.makedirs(folder_name)
     plt.savefig(f"{folder_name}/{time_step_mode}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+    plt_index += 1
     # plt.show()
 #endregion
 
@@ -244,28 +271,11 @@ def construct_problem_hamiltonian(n, m, A, y):
 
 #endregion
 
-#region === Generation of Hamiltonian ===
-# init()
-# H_P = construct_problem_hamiltonian(n, m, A, y)
-# print(A)
-# print(y)
-# print(H_D)
-# print(H_P)
-# eigval_H_D = np.sort(np.linalg.eigvalsh(H_D))
-# eigval_H_P = np.sort(np.linalg.eigvalsh(H_P))
-# print(eigval_H_D)
-# print(eigval_H_P)
-# print("First energy of H_D:", eigval_H_D[0])
-# print("First energy of H_P:", eigval_H_P[0])
-# print("Second energy of H_D:", eigval_H_D[1])
-# print("Second energy of H_P:", eigval_H_P[1])
-# endregion
-
 #region === Calculate energy gap in each step ===
 H_D = H_P = 0
 gap = []
 def construct_ham(i):
-    t=(i+0.5)*dt
+    t=(i+0.5)*dt_standard
     alpha=(1-t/T)
     beta=t/T
     H = alpha * H_D + beta * H_P
@@ -342,6 +352,8 @@ if code_mode == 'annealing' or code_mode == 'both':
         eta = eta_candidate[i]
         for j in range(repeat):
             init()
-            print(f"The ground state (eta={eta}):", s)
-            run(repeat_idx=j,time_step_mode='flexible')
-            run(repeat_idx=j,time_step_mode='standard')
+            # run(repeat_idx=j,time_step_mode='standard')
+            for function in schedule_funcs:
+                scheduling(schedule_func=function)
+                # print(dt_array)
+                # run(repeat_idx=j,time_step_mode='flexible')
