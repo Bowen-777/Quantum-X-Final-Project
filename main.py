@@ -18,26 +18,32 @@ time_step_mode = 'standard'  # [flexible, standard]
 # schedule_func_init = 'quadratic'  # [quadratic, tanh]
 schedule_funcs = ['quadratic', 'tanh', 'arctan']
 
-n=6
+n=10
 m=10*n  # Set m to be n^2
 eta=0.1
-kappa = 1  # The scaling of H_P (The objective hamiltonian) in the energy_gap calculation.
+kappa = 10  # The scaling of H_P (The objective hamiltonian) in the energy_gap calculation.
 
 rounds = 1  # How many eta's do we want to run in eta_candidate
 repeat = 1
 eta_candidate = np.linspace(0.1, 0.3, 6)
 
 T=50
-M=10*T  # Annealing step
+M=100  # Annealing step
 dt_standard=T/M
-shots_sampling = 100
+shots_sampling = 1000
+times = [20, 30, 40, 50, 60, 70]
+
 # c=5  # The scaling of H_P in the real code
 
 delta_min = 0.5
 amplitude_quad = 3  # The rate of gap increasing regarding the center
 amplitude_tanh = 1  # The rate of gap increasing regarding the center
 amplitude_arctan = 3  # The rate of gap increasing regarding the center
+amplitudes = {'quadratic': [0.5, 1, 2, 4, 8], 
+              'tanh': [0.25, 0.5, 1, 2, 4, 8], 
+              'arctan': [0.1, 0.25, 0.5, 1, 2]}
 s_star = 0.5  # The step min_energy_gap occurs
+time_step_upper = False  # Whether to use 'max(dt, dt_standard)' in replace of 'dt_standard' in the rotation
 
 s=[]
 A=[]
@@ -49,26 +55,20 @@ folder_name = now.strftime("RST_%m-%d_%H%M")
 plt_index = 1
 
 #region === finetune time gap based on energy gap ===
-def get_gap(s, schedule_func):
+def get_gap(s, schedule_func, amplitude):
     if schedule_func == 'quadratic':
-        return np.sqrt(delta_min**2 + amplitude_quad * (s - s_star)**2)
+        return np.sqrt(delta_min**2 + amplitude * (s - s_star)**2)
     elif schedule_func == 'tanh':
-        return np.tanh((s - s_star) / amplitude_tanh)
+        return np.tanh((s - s_star) / amplitude)
     elif schedule_func == 'arctan':
-        return np.arctan((s - s_star) / amplitude_arctan)
+        return np.arctan((s - s_star) / amplitude)
     else:
         raise ValueError("this schedule_func is not implemented.")
 
-def scheduling(schedule_func):
-    # if schedule_func == 'quadratic':
-        # s_grid = np.linspace(0, 1, M)
-    # elif schedule_func == 'tanh':
-    #     s_grid = np.linspace(-1, 1, M)
-    # else:
-    #     raise ValueError("this schedule_func is not implemented.")
+def scheduling(schedule_func, amplitude):
     global dt_array, plt_index
     s_grid = np.linspace(0, 1, M)
-    weights = get_gap(s_grid, schedule_func)**2
+    weights = get_gap(s_grid, schedule_func, amplitude)**2
     dt_array = (weights / np.sum(weights)) * T
     if code_mode == 'plot' or code_mode == 'annealing':
         x = np.linspace(0, M-1, M)
@@ -80,7 +80,7 @@ def scheduling(schedule_func):
         plt.ylabel("dt array")
         if not os.path.exists(folder_name):
             os.makedirs(folder_name)
-        plt.savefig(f"{folder_name}/dt_weight_{schedule_func}.png", dpi=300, bbox_inches='tight')
+        plt.savefig(f"{folder_name}/dt_weight_{schedule_func}_amp={amplitude}.png", dpi=300, bbox_inches='tight')
         plt.close()
         plt_index += 1
 #endregion
@@ -115,7 +115,7 @@ def init():
 #endregion
 
 #region === Run the annealing algorithm to get the ground state ===
-def run(repeat_idx, time_step_mode, schedule_func):
+def run(repeat_idx, time_step_mode, schedule_func, amplitude):
     t=0
     global A, s, y, plt_index
 
@@ -124,6 +124,7 @@ def run(repeat_idx, time_step_mode, schedule_func):
         circ.h(i)
 
     current_time = 0.0
+    total_time = 0.0
     for i in range(M):
         if time_step_mode == 'standard':
             dt = dt_standard
@@ -140,8 +141,15 @@ def run(repeat_idx, time_step_mode, schedule_func):
             # print(t_mid)
         else:
             raise ValueError("Not correct value of \'time_step_mode\'")
-
-        angle=2.0*beta*dt_standard
+        
+        if time_step_upper == True:
+            angle_b=2.0*beta*max(dt, dt_standard)
+            angle_a=2.0*alpha*max(dt, dt_standard)
+            total_time += max(dt, dt_standard)
+        else:
+            angle_b=2.0*beta*dt_standard
+            angle_a=2.0*alpha*dt_standard
+            total_time += dt_standard
 
         for k in range(m):
             for j in range(n):
@@ -150,7 +158,7 @@ def run(repeat_idx, time_step_mode, schedule_func):
             if y[k]==1:
                 circ.x(n)
 
-            circ.rz(angle/(m/n),n)
+            circ.rz(angle_b/(m/n),n)  # The objective H_P
 
             if y[k]==1:
                 circ.x(n)
@@ -159,9 +167,10 @@ def run(repeat_idx, time_step_mode, schedule_func):
                     circ.cx(j,n)
 
         for j in range(n):
-            circ.rx(2.0*alpha*dt_standard,j)
+            circ.rx(angle_a,j) # The transverse H_D
 
     circ.measure(range(n),range(n))
+    print("total time:", total_time)
 
     simulator=AerSimulator()
     compiled_circuit=transpile(circ,simulator)
@@ -210,7 +219,16 @@ def run(repeat_idx, time_step_mode, schedule_func):
     if not os.path.exists(folder_name):
         os.makedirs(folder_name)
     file_name = time_step_mode + '_' + schedule_func
-    plt.savefig(f"{folder_name}/{file_name}_{eta}_{repeat_idx}.png", dpi=300, bbox_inches='tight')
+    if time_step_mode != 'standard':
+        file_name += f'_amp={amplitude}'
+    # === General file name ===
+    # plt.savefig(f"{folder_name}/{file_name}_eta={eta}_{repeat_idx}.png", dpi=300, bbox_inches='tight')
+    # === Optimization for T ===
+    plt.savefig(f"{folder_name}/{file_name}_eta={eta}_T={T}_{repeat_idx}.png", dpi=300, bbox_inches='tight')
+    # === Optimization for time_step_upper ===
+    # plt.savefig(f"{folder_name}/{file_name}_eta={eta}_max={time_step_upper}_{repeat_idx}.png", dpi=300, bbox_inches='tight')
+    # === Optimization for scaling ===
+    # plt.savefig(f"{folder_name}/{file_name}_eta={eta}_{repeat_idx}_scale={use_scaling}.png", dpi=300, bbox_inches='tight')
     plt.close()
     plt_index += 1
     # plt.show()
@@ -330,6 +348,7 @@ if code_mode == 'energy_gap' or code_mode == 'both':
         calculate_energy_gap()
         gap_min.append(np.min(gap))
         x = np.linspace(0, M-1, M)
+        plt.figure(plt_index)
         plt.plot(x, gap, label=f'n={n},m={m}')
         plt.legend()
         plt.title("Energy gap")
@@ -342,6 +361,8 @@ if code_mode == 'energy_gap' or code_mode == 'both':
         if not os.path.exists(folder_name):
             os.makedirs(folder_name)
     plt.savefig(f"{folder_name}/energy_gap.png", dpi=300, bbox_inches='tight')
+    plt.close()
+    plt_index += 1
     # print(gap_min)
 #endregion
 
@@ -351,7 +372,22 @@ if code_mode == 'annealing' or code_mode == 'both':
         eta = eta_candidate[i]
         for j in range(repeat):
             init()
-            run(repeat_idx=j, time_step_mode='standard', schedule_func='')
+            # === Optimization2: total time T (with standard scheduling) ===
+            # for t in times:
+            #     T = t
+            #     dt_standard = T/M
+            #     run(repeat_idx=j, time_step_mode='standard', schedule_func='', amplitude='')
+
+            # === Optimization3: flexible time scheduling ===
+            run(repeat_idx=j, time_step_mode='standard', schedule_func='', amplitude='')
             for function in schedule_funcs:
-                scheduling(schedule_func=function)
-                run(repeat_idx=j, time_step_mode='flexible', schedule_func=function)
+                for amplitude in amplitudes[function]:
+                    scheduling(schedule_func=function, amplitude=amplitude)
+                    run(repeat_idx=j, time_step_mode='flexible', schedule_func=function, amplitude=amplitude)
+
+            # === Optimization4: time_step_upper (with best settings) ===
+            # scheduling(schedule_func='quadratic', amplitude=8)
+            # time_step_upper = False
+            # run(repeat_idx=j, time_step_mode='flexible', schedule_func='quadratic', amplitude=8)
+            # time_step_upper = True
+            # run(repeat_idx=j, time_step_mode='flexible', schedule_func='quadratic', amplitude=8)
